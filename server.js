@@ -7,8 +7,8 @@ const taskRoutes = require('./routes/taskRoutes');
 // Initialize Express application
 const app = express();
 
-// Set port from environment variable or default to 5000
-const PORT = process.env.PORT || 5000;
+// Set port from environment variable or default to 3000
+const PORT = process.env.PORT || 3000;
 
 // Middleware to parse incoming JSON payloads
 app.use(express.json());
