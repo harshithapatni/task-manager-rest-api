@@ -49,14 +49,14 @@ const createTask = async (req, res) => {
     }
 
     // 3. Validate completed field if supplied
-    let completedValue = 0; // Default: false
+    let completedValue = false; // Default: false
     if (completed !== undefined) {
       if (typeof completed !== 'boolean' && completed !== 0 && completed !== 1) {
         return res.status(400).json({
           error: 'Completed must be a boolean value (true or false).',
         });
       }
-      completedValue = completed ? 1 : 0;
+      completedValue = Boolean(completed);
     }
 
     // 4. Insert task into database
@@ -208,14 +208,14 @@ const updateTask = async (req, res) => {
     }
 
     // 6. Validate completed if provided
-    let updatedCompleted = existingTask.completed;
+    let updatedCompleted = Boolean(existingTask.completed);
     if (completed !== undefined) {
       if (typeof completed !== 'boolean' && completed !== 0 && completed !== 1) {
         return res.status(400).json({
           error: 'Completed must be a boolean value (true or false).',
         });
       }
-      updatedCompleted = completed ? 1 : 0;
+      updatedCompleted = Boolean(completed);
     }
 
     // 7. Update task in database and update updated_at timestamp

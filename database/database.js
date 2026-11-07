@@ -1,115 +1,115 @@
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
+const { Pool } = require('pg');
 
-// Define database file path inside the database directory
-const dbPath = path.resolve(__dirname, 'task_manager.db');
+// Create PostgreSQL connection pool
+// If DATABASE_URL is provided, enable SSL for remote hosting (e.g. Render)
+const isLocal =
+  !process.env.DATABASE_URL ||
+  process.env.DATABASE_URL.includes('localhost') ||
+  process.env.DATABASE_URL.includes('127.0.0.1');
 
-// Connect to SQLite database (creates file automatically if it doesn't exist)
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('Error connecting to SQLite database:', err.message);
-  } else {
-    console.log('Connected to the SQLite database at:', dbPath);
-  }
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: isLocal ? false : { rejectUnauthorized: false },
 });
 
-// Enable foreign key constraints in SQLite
-db.run('PRAGMA foreign_keys = ON');
+pool.on('error', (err) => {
+  console.error('Unexpected error on idle PostgreSQL client:', err.message);
+});
 
 /**
  * Initialize database tables: users and tasks.
  * Called automatically when server starts up.
  */
-const initDatabase = () => {
-  db.serialize(() => {
-    // 1. Create users table
-    db.run(
-      `CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        email TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )`,
-      (err) => {
-        if (err) {
-          console.error('Error creating users table:', err.message);
-        } else {
-          console.log('Users table verified/created successfully.');
-        }
-      }
-    );
+const initDatabase = async () => {
+  if (!process.env.DATABASE_URL) {
+    console.warn('⚠️  DATABASE_URL environment variable is not set. Please set it in your .env or Render environment.');
+    return;
+  }
 
-    // 2. Create tasks table
-    db.run(
-      `CREATE TABLE IF NOT EXISTS tasks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        title TEXT NOT NULL,
+  try {
+    // 1. Create users table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // 2. Create tasks table with foreign key reference to users
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
         description TEXT NOT NULL,
-        completed INTEGER DEFAULT 0,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
-      )`,
-      (err) => {
-        if (err) {
-          console.error('Error creating tasks table:', err.message);
-        } else {
-          console.log('Tasks table verified/created successfully.');
-        }
-      }
-    );
-  });
+        completed BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    console.log('✅ PostgreSQL database tables verified/created successfully.');
+  } catch (err) {
+    console.error('❌ Error initializing PostgreSQL tables:', err.message);
+  }
+};
+
+/**
+ * Helper to convert standard SQL queries with '?' placeholders to PostgreSQL '$1, $2...' format.
+ */
+const convertSql = (sql) => {
+  let paramIndex = 1;
+  return sql.replace(/\?/g, () => `$${paramIndex++}`);
 };
 
 /**
  * Helper function for INSERT, UPDATE, DELETE queries using Promises.
+ * For INSERT statements, automatically appends RETURNING id to capture the generated ID.
  * Returns an object with the inserted id and number of affected rows.
  */
-const dbRun = (sql, params = []) => {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) {
-        return reject(err);
-      }
-      resolve({ id: this.lastID, changes: this.changes });
-    });
-  });
+const dbRun = async (sql, params = []) => {
+  let pgSql = convertSql(sql);
+
+  // If this is an INSERT statement and doesn't already have RETURNING, append RETURNING id
+  const isInsert = /^\s*INSERT\s+INTO/i.test(pgSql);
+  if (isInsert && !/RETURNING/i.test(pgSql)) {
+    pgSql += ' RETURNING id';
+  }
+
+  const result = await pool.query(pgSql, params);
+  const insertedId = isInsert && result.rows.length > 0 ? result.rows[0].id : null;
+
+  return {
+    id: insertedId,
+    changes: result.rowCount,
+  };
 };
 
 /**
  * Helper function for single-row SELECT queries using Promises.
  * Returns a single row object or undefined if not found.
  */
-const dbGet = (sql, params = []) => {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) {
-        return reject(err);
-      }
-      resolve(row);
-    });
-  });
+const dbGet = async (sql, params = []) => {
+  const pgSql = convertSql(sql);
+  const result = await pool.query(pgSql, params);
+  return result.rows[0];
 };
 
 /**
  * Helper function for multi-row SELECT queries using Promises.
  * Returns an array of row objects.
  */
-const dbAll = (sql, params = []) => {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) {
-        return reject(err);
-      }
-      resolve(rows);
-    });
-  });
+const dbAll = async (sql, params = []) => {
+  const pgSql = convertSql(sql);
+  const result = await pool.query(pgSql, params);
+  return result.rows;
 };
 
 module.exports = {
-  db,
+  pool,
   initDatabase,
   dbRun,
   dbGet,

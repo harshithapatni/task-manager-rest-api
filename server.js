@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 const { initDatabase } = require('./database/database');
 const authRoutes = require('./routes/authRoutes');
 const taskRoutes = require('./routes/taskRoutes');
@@ -9,6 +10,40 @@ const app = express();
 
 // Set port from environment variable or default to 3000
 const PORT = process.env.PORT || 3000;
+
+// CORS configuration for local development and deployed Vercel frontend
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  process.env.CLIENT_URL,
+].filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (e.g. mobile apps, curl, Postman, health check)
+      if (!origin) return callback(null, true);
+
+      // If CLIENT_URL is wildcard or origin is any Vercel deployment
+      if (process.env.CLIENT_URL === '*' || origin.endsWith('.vercel.app')) {
+        return callback(null, true);
+      }
+
+      const isAllowed = allowedOrigins.some((allowed) => {
+        if (allowed === origin) return true;
+        if (allowed.replace(/\/$/, '') === origin.replace(/\/$/, '')) return true;
+        return false;
+      });
+
+      if (isAllowed) {
+        return callback(null, true);
+      }
+
+      callback(new Error(`CORS policy does not allow access from origin: ${origin}`));
+    },
+    credentials: true,
+  })
+);
 
 // Middleware to parse incoming JSON payloads
 app.use(express.json());
@@ -23,13 +58,14 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
-// Automatically initialize SQLite database tables
+// Automatically initialize PostgreSQL database tables
 initDatabase();
 
 // Health Check Endpoint
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     message: 'Task Manager API is running',
+    environment: process.env.NODE_ENV || 'development',
   });
 });
 
